@@ -1,0 +1,299 @@
+---
+title: "Amazon Case Study"
+author: "Ayushi"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+---
+#==========================================================
+## SET UP R MARKDOWN
+#==========================================================
+```{r}
+rm(list = ls())
+setwd("/Users/ayushichoudhary/Desktop/MSBA_Course/OMIS_2392/R_project")
+
+# Load libraries
+library(stargazer)
+library(gdata)
+library(ggplot2)
+library(psych) 
+library(ggeffects)
+library(QuantPsyc)
+library(lmtest)
+library(multiwayvcov)
+library(sandwich)
+library(foreign)
+library(AER)
+library(aod)
+library(Rcpp)
+library(mfx)
+library(nnet)
+library(reshape2)
+library(msm)
+
+# turn off scientific notation except for big numbers. 
+options(scipen = 9)
+```
+
+#==========================================================
+## READ AND EXPLORE DATA
+#==========================================================
+```{r}
+## Loading data
+mydata = read.csv("Amazon.csv", header = TRUE)
+
+## Summary statistics
+stargazer(mydata, type="text", median=TRUE, iqr=TRUE,digits=1, title="Descriptive Statistics")  
+
+#check normalization
+ggplot(mydata, aes(x=purchase)) + geom_histogram(colour="green") + stat_bin(binwidth = 5)
+qqnorm(mydata$purchase)
+qqline(mydata$purchase, col=2)
+
+#plot log purchase to check normalization
+ggplot(mydata, aes(x=log(mydata$purchase))) + geom_histogram(colour="green")
+qqnorm(log(mydata$purchase))
+qqline(log(mydata$purchase), col=2)
+
+#Check collinearity 
+df=mydata[c("distance","income","gender","facebookvisit","distance","cust_age","numoffriends", "numofposts","PublicProfile")]
+round(cor(df),3)
+
+#OLS model with all variables
+model0 <- lm(log(purchase)~income+gender+facebookvisit+distance+cust_age+numoffriends+numofposts+PublicProfile, data=mydata)
+
+stargazer(model0,  
+          title="Regression Results", type="text", 
+          column.labels=c("Model-0"),
+          df=FALSE, digits=2, star.cutoffs = c(0.05,0.01,0.001)) 
+
+#OLS model with reasonable variables
+model1 <- lm(log(purchase)~facebookvisit+distance+income+gender+cust_age, data=mydata)
+stargazer(model1,  
+          title="Regression Results", type="text", 
+          column.labels=c("Model-1"),
+          df=FALSE, digits=2, star.cutoffs = c(0.05,0.01,0.001)) 
+
+#interaction between age and facebookvisit
+df2 <- mydata[c("purchase","cust_age","facebookvisit")]
+res1 = lm(purchase~cust_age*as.factor(facebookvisit), data = df2)
+stargazer(res1, 
+          title="Regression Results", type="text", 
+          column.labels=c("Model-1"),
+          df=FALSE, digits=2, star.cutoffs = c(0.05,0.01,0.001)) 
+
+meffects1 <- ggpredict(res1, terms=c("age", "facebookvisit"))
+
+ggplot(meffects1,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("age") + ylab("Facebook visit") +
+    labs(colour="Online\nsearch?") + 
+    scale_colour_discrete(labels=c("0", "1"))
+
+
+poisson1 <- glm(purchase ~ distance+ income + cust_age + facebookvisit + gender, family="poisson", data=mydata)
+poisson2 <- glm(purchase ~ distance+ income + cust_age + facebookvisit + gender + numoffriends + numofposts + PublicProfile, family="poisson", data=mydata)
+poissonempty <- glm(purchase ~ 1, family="poisson", data=mydata)
+
+stargazer(poissonempty, poisson1,poisson2,  
+          title="Poisson Results", type="text", 
+          column.labels=c("poissonempty", "poisson1", "poisson2"),
+          df=FALSE, digits=3, star.cutoffs = c(0.05,0.01,0.001)) 
+
+lrtest(poisson1, poissonempty) # possion is not a good fit
+lrtest(poisson2, poissonempty) # possion is not a good fit
+lrtest(poisson1, poisson2)
+
+
+## Negative Binomial 
+negbin1 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender, data = mydata)
+negbin2 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender + numoffriends + numofposts + PublicProfile, data=mydata)
+
+negbin3 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender + numoffriends, data=mydata)
+negbin4 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender + numofposts, data=mydata)
+negbin5 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender + PublicProfile, data=mydata)
+
+negbinempty<- glm.nb(purchase ~ 1, data = mydata)
+
+stargazer(negbinempty, negbin1 ,negbin2,negbin3, negbin4, negbin5,  
+          title="Negative Binomial Results", type="text", 
+          column.labels=c("negbinempty", "negbin1", "negbin2", "negbin3", "negbin4", "negbin5"),
+          df=FALSE, digits=3, star.cutoffs = c(0.05,0.01,0.001))
+
+lrtest(negbinempty, negbin1)
+lrtest(negbinempty, negbin2)
+lrtest(negbin1, negbin2) # negbin 1 is better
+lrtest(negbin1, negbin3) # negbin 1 is better
+lrtest(negbin1, negbin4) # negbin 1 is better
+lrtest(negbin1, negbin5) # negbin 1 is better
+
+lrtest(poisson1, negbin1) #negbin 1 is better
+
+stargazer(negbin1, 
+          apply.coef = exp, t.auto=F, p.auto = F,
+          title="Regression Results", type="text", 
+          column.labels=c("IRRs"),
+          df=FALSE, digits=4, star.cutoffs = c(0.05,0.01,0.001))
+
+negbin1 <- glm.nb(purchase ~ distance+ income + cust_age + facebookvisit + gender, data = mydata)
+
+####### gender and fbvisit (not significant) ###
+negbinintecraction1 <- glm.nb(purchase~income+facebookvisit*gender+distance+cust_age, data=mydata)
+
+stargazer(negbinintecraction1, 
+          apply.coef = exp, t.auto=F, p.auto = F,
+          title="Regression Results", type="text", 
+          column.labels=c("IRRs"),
+          df=FALSE, digits=4, star.cutoffs = c(0.05,0.01,0.001))
+
+meffects6 <- ggpredict(negbinintecraction1, terms=c("gender", "facebookvisit"))
+ggplot(meffects6,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("gender") + ylab("Purchase") +
+    labs(colour="facebookvisit") + 
+    scale_colour_discrete(labels=c("No", "Yes")) +
+    scale_x_continuous(breaks=c(0,1), labels=c("Male", "Female")) +
+    theme(axis.title.x=element_blank())
+
+meffects7 <- ggpredict(negbinintecraction1, terms=c("facebookvisit","gender"))
+ggplot(meffects7,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("facebookvisit") + ylab("Purchase") +
+    labs(colour="gender") + 
+    scale_colour_discrete(labels=c("Male", "Female")) +
+    scale_x_continuous(breaks=c(0,1), labels=c("No", "Yes")) +
+    theme(axis.title.x=element_blank())
+
+
+###########################################################
+
+negbinintecraction2 <- glm.nb(purchase~income+facebookvisit*cust_age +gender+distance, data=mydata)
+
+stargazer(negbinintecraction2, 
+          apply.coef = exp, t.auto=F, p.auto = F,
+          title="Regression Results", type="text", 
+          column.labels=c("IRRs"),
+          df=FALSE, digits=4, star.cutoffs = c(0.05,0.01,0.001))
+
+
+meffects8 <- ggpredict(negbinintecraction2, terms=c("facebookvisit", "cust_age [29,34,39]"))
+
+ggplot(meffects8,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("FBvisit") + ylab("Purchase") +
+    labs(colour="cust age") + 
+    scale_colour_discrete(labels=c("29", "34","39")) + 
+    scale_x_continuous(breaks=c(0,1), labels=c(" Fbvisit No", "Fb visit Yes"))+
+    theme(axis.title.x=element_blank())
+
+
+table(mydata$cust_age)
+
+hist(mydata$cust_age)
+# test for heteroskadasticity
+gqtest(negbin1) # Significant Goldfeld-Quandt test does not indicate heteroscedasticity 
+bptest(negbin1) # Significant Breusch-Pagan test  indicates heteroscedasticity
+
+consstder <- sqrt(diag(vcovHC(negbin1, type="const"))) # produces normal standard errors
+HWrobstder <- sqrt(diag(vcovHC(negbin1, type="HC1"))) # produces Huber-White robust standard errors 
+
+stargazer(negbin1, negbin1,  
+          se=list(consstder, HWrobstder),
+          title="Negative Binomial Results with normalized", type="text", 
+          column.labels=c("Normal SE", "HW-Robust SE"),
+          df=FALSE, digits=4, star.cutoffs = c(0.05,0.01,0.001)) 
+
+stargazer(negbin1,
+          se=list(HWrobstder),
+          title="Negative Binomial Results with HW Robust SE", type="text", 
+          column.labels=c("Negetive Binomial Results"),
+          df=FALSE, digits=4, star.cutoffs = c(0.05,0.01,0.001))
+
+
+meffects4 <- ggpredict(negbin1, terms=c("facebookvisit")) 
+
+ggplot(meffects4,aes(x, predicted)) + geom_point(size=3, colour="maroon") + geom_line() +
+ xlab("with or w/o FB") + ylab("Predicted purchase quantity") +
+ scale_x_continuous(breaks=c(1,2), labels=c("with FB", "without FB")) 
+
+newdata <- with(mydata, data.frame(facebookvisit = seq(from = 0, to = 1), cust_age=mean(mydata$cust_age), distance=mean(mydata$distance),gender = mean(mydata$gender),income=mean(mydata$income))) # By doing out-of-sample prediction, we can quantify the exact predicted values
+newdata$predicted_purchase <- predict(negbin1, newdata, type="response")
+
+
+
+
+###########        Linear Model 
+
+
+
+##Endogenity
+modelEndo1<- ivreg(purchase~ facebookvisit + distance+income+cust_age+gender | numoffriends+numofposts+PublicProfile +distance+income+cust_age+gender, data=mydata)
+modelEndo2<- ivreg(log(purchase)~ facebookvisit + distance+income+cust_age+gender | numoffriends+numofposts+PublicProfile +distance+income+cust_age+gender, data=mydata)
+
+modelEndo3<- ivreg(log(purchase)~ distance+income+cust_age*facebookvisit+gender | numoffriends+numofposts+PublicProfile +distance+income+ cust_age*facebookvisit+ gender, data=mydata)
+
+
+
+stargazer(modelEndo1, modelEndo2, 
+          title="Regression Results", type="text", 
+          column.labels=c("modelEndo1", "modelEndo2"),
+          df=FALSE, digits=2, star.cutoffs = c(0.05,0.01,0.001))
+
+summary(modelEndo2) # Durbin-Wu-Hausman test result
+summary(modelEndo2,diagnostics = TRUE) #Instruments test
+
+
+#interactions
+
+modelintecraction1 <- lm(log(purchase)~income+gender+distance+facebookvisit*cust_age, data=mydata)
+
+stargazer(modelintecraction1,
+          title="Interaction Results", type="text", 
+          column.labels=c("Model Intecraction 1"),
+          df=FALSE, digits=2, star.cutoffs = c(0.05,0.01,0.001)) 
+
+meffects1 <- ggpredict(modelintecraction1, terms=c("facebookvisit", "cust_age [29,34,39]"))
+
+ggplot(meffects1,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("FBvisit") + ylab("Purchase") +
+    labs(colour="cust age") + 
+    scale_colour_discrete(labels=c("29", "34","39"))
+
+modelintecraction2 <- lm(log(purchase)~income+facebookvisit*gender+distance+cust_age, data=mydata)
+meffects2 <- ggpredict(modelintecraction2, terms=c("facebookvisit", "gender"))
+ggplot(meffects2,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("facebookvisit") + ylab("Purchase") +
+    labs(colour="gender") + 
+    scale_colour_discrete(labels=c("Male", "Female")) +
+    scale_x_continuous(breaks=c(0,1), labels=c("FB visit - No", "FB Visit- Yes")) +
+    theme(axis.title.x=element_blank())
+
+modelintecraction3 <- lm(log(purchase)~income+facebookvisit*gender+distance+cust_age, data=mydata)
+meffects3 <- ggpredict(modelintecraction3, terms=c("gender", "facebookvisit"))
+ggplot(meffects3,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("gender") + ylab("Purchase") +
+    labs(colour="facebookvisit") + 
+    scale_colour_discrete(labels=c("No", "Yes")) +
+    scale_x_continuous(breaks=c(0,1), labels=c("Male", "Female")) +
+    theme(axis.title.x=element_blank())
+
+
+meffects2 <- ggpredict(modelintecraction2, terms=c("cust_age", "facebookvisit"))
+ggplot(meffects1,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("cust_age") + ylab("Purchase") +
+    labs(colour="FBvisit") + 
+    scale_colour_discrete(labels=c("No", "Yes"))
+
+
+
+
+
+
+
+modelinteraction2 <- ivreg(log(purchase)~ distance+income+ cust_age*facebookvisit+gender | numoffriends+numofposts+PublicProfile +distance+income+ cust_age*facebookvisit+ gender, data=mydata)
+
+meffects1 <- ggpredict(modelintecraction1, terms=c("cust_age", "facebookvisit")) # generates a tidy data frame  
+
+ggplot(meffects4,aes(x, predicted, colour=group)) + geom_line(size=1.3) + 
+    xlab("Number of Catalogs Issued") + ylab("Predicted Sales ($)") +
+    labs(colour="Online\nsearch?") + 
+    scale_colour_discrete(labels=c("No", "Yes"))
+
+```
